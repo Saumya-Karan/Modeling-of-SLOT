@@ -1,5 +1,3 @@
-
-
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
@@ -15,10 +13,7 @@ from parameters import (
     SAVE_EVERY, DT,
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Colour scheme — all legs same blue (Viz-1)
-# ─────────────────────────────────────────────────────────────────────────────
-LEG_COLOR    = '#1565C0'        # same blue for all 4 legs (matches rod36.py)
+LEG_COLOR    = '#1565C0'        
 LEG_NAMES    = ['Leg 0 (+x+y)', 'Leg 1 (−x+y)', 'Leg 2 (−x−y)', 'Leg 3 (+x−y)']
 BODY_COLOR   = '#FFC107'
 BODY_EDGE    = '#E65100'
@@ -29,17 +24,9 @@ PULLEY_COLOR = '#FF6F00'
 # Per-leg plot colours for state plots (kept distinct for readability)
 PLOT_COLORS  = ['#1565C0', '#2E7D32', '#BF360C', '#6A1B9A']
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Cross-section thickness at node j
-# ─────────────────────────────────────────────────────────────────────────────
 def _thick(j: int) -> float:
     return THICK_FIXED + (THICK_TIP - THICK_FIXED) * j / (N - 1)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Rod tube faces
-# ─────────────────────────────────────────────────────────────────────────────
 def _rod_tube_faces(r: np.ndarray, R: np.ndarray) -> list:
     """
     Build quad faces for the tapered rod tube.
@@ -67,10 +54,6 @@ def _rod_tube_faces(r: np.ndarray, R: np.ndarray) -> list:
     faces.append(corners(N - 1))    # end cap
     return faces
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Cuboid faces from CoM + orientation
-# ─────────────────────────────────────────────────────────────────────────────
 def _cuboid_faces(x: np.ndarray, Rb: np.ndarray) -> list:
     hx, hy, hz = BX/2, BY/2, BZ/2
     offs = np.array([[ hx, hy, hz],[ hx,-hy, hz],[-hx,-hy, hz],[-hx, hy, hz],
@@ -80,30 +63,12 @@ def _cuboid_faces(x: np.ndarray, Rb: np.ndarray) -> list:
             [v[0],v[1],v[5],v[4]],[v[1],v[2],v[6],v[5]],
             [v[2],v[3],v[7],v[6]],[v[3],v[0],v[4],v[7]]]
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Pulley world position  (Viz-2)
-#
-#   pulley = r[0] + R0_TEN * (cos(θ) d3 + sin(θ) d1)
-#
-#   θ = 135°:  cos = -0.707, sin = +0.707
-#   → moves  0.028 m inward (along -d3) and 0.028 m upward (along +d1)
-#   → lands inside the cuboid torso  ✓
-# ─────────────────────────────────────────────────────────────────────────────
 def _pulley_pos(r0: np.ndarray, R0: np.ndarray) -> np.ndarray:
-    d1 = R0[:, 0]   # upward director at clamp
-    d3 = R0[:, 2]   # outward tangent at clamp
+    d1 = R0[:, 0]   
+    d3 = R0[:, 2]   
     ca, sa = np.cos(TENDON_ANGLE), np.sin(TENDON_ANGLE)
     return r0 + R0_TEN * (ca * d3 + sa * d1)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Tendon line  (Viz-3)
-#
-#   Runs from pulley to each active node along the BOTTOM SURFACE of the rod.
-#   Bottom surface = centreline offset by -thickness/2 in d1 direction.
-#   Consistent with rod36.py:  z_tendon = z - thickness/2
-# ─────────────────────────────────────────────────────────────────────────────
 def _tendon_line(r: np.ndarray, R: np.ndarray) -> tuple:
     pulley = _pulley_pos(r[0], R[0])
 
@@ -112,17 +77,13 @@ def _tendon_line(r: np.ndarray, R: np.ndarray) -> tuple:
     zs = [pulley[2]]
 
     for j in range(TENDON_NODES):
-        d1      = R[j, :, 0]                       # upward director at node j
+        d1      = R[j, :, 0]                       
         t_half  = _thick(j) / 2.0
-        pt      = r[j] - t_half * d1               # bottom surface point
+        pt      = r[j] - t_half * d1               
         xs.append(pt[0]);  ys.append(pt[1]);  zs.append(pt[2])
 
     return xs, ys, zs
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 3-D Animation
-# ─────────────────────────────────────────────────────────────────────────────
 
 def animate(hist: dict,
             interval_ms: int = 30,
@@ -134,8 +95,8 @@ def animate(hist: dict,
     times    = hist["time"]
     xs       = hist["x"]
     Rbs      = hist["Rb"]
-    rod_rs   = hist["rod_rs"]    # (4, F, N, 3)
-    rod_Rs   = hist["rod_Rs"]    # (4, F, N, 3, 3)
+    rod_rs   = hist["rod_rs"]    
+    rod_Rs   = hist["rod_Rs"]    
     T_arr    = hist["tendon_mag"]
     n_frames = len(times)
 
@@ -157,8 +118,6 @@ def animate(hist: dict,
                     np.zeros((2,2)),
                     alpha=0.08, color='gray', zorder=0)
 
-    # ── Artists ───────────────────────────────────────────────────────────
-    # Viz-1: all legs same blue
     rod_patches = []
     for _ in range(4):
         pc = Poly3DCollection([], facecolor=LEG_COLOR,
@@ -173,8 +132,6 @@ def animate(hist: dict,
     tendon_lines = [ax.plot([], [], [], '-',
                             color=TENDON_COLOR, lw=1.5, alpha=0.9, zorder=5)[0]
                     for _ in range(4)]
-
-    # Viz-2: pulley markers (orange dots) inside the torso
     pulley_markers = [ax.scatter([], [], [], color=PULLEY_COLOR, s=60,
                                  marker='o', zorder=6, depthshade=False)
                       for _ in range(4)]

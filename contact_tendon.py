@@ -15,13 +15,7 @@ import math as _math
 _ca_ten = _math.cos(TENDON_ANGLE)
 _sa_ten = _math.sin(TENDON_ANGLE)
 
-# Per-node thickness (tapered), shape (N,)
 _thickness = THICK_FIXED + (THICK_TIP - THICK_FIXED) * np.linspace(0.0, 1.0, N)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 1.  GROUND CONTACT  (vectorised — no Python loop over N)
-# ─────────────────────────────────────────────────────────────────────────────
 
 def ground_contact_forces(r, v_world):
     """
@@ -46,11 +40,6 @@ def ground_contact_forces(r, v_world):
     F_fy = np.where(in_mot, -MU_CONTACT * F_n * vy / safe_vt, 0.0)
 
     return np.stack([F_fx, F_fy, F_n], axis=-1)            # (N, 3)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 2.  TENDON  (vectorised over TENDON_NODES, no Python loop)
-# ─────────────────────────────────────────────────────────────────────────────
 
 def tendon_forces_and_moments(t, rod_R):
     """
@@ -91,22 +80,14 @@ def tendon_forces_and_moments(t, rod_R):
     return F_tend, M_tend
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 3.  COMBINED
-# ─────────────────────────────────────────────────────────────────────────────
-
 def external_forces_and_moments(t, rod_id, rod_r, rod_R, v_world):
     F_c        = ground_contact_forces(rod_r, v_world)
     F_t, M_t   = tendon_forces_and_moments(t, rod_R)
     return F_c + F_t, M_t
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 4.  POSITION FLOOR CLAMP  (vectorised)
-# ─────────────────────────────────────────────────────────────────────────────
 
 def apply_floor_clamp(r, v_world):
-    """Clamp z ≥ GROUND_Z in-place. Velocity unchanged (Bug 12 fix)."""
     below = r[:, 2] < GROUND_Z
     if np.any(below):
         r[:, 2] = np.where(below, GROUND_Z, r[:, 2])

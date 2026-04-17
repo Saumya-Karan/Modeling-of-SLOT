@@ -1,9 +1,7 @@
-
-
-import numpy as np          # history arrays always on CPU
+import numpy as np          
 import time as _time
 
-from gpu_utils import to_host        # GPU→CPU transfer
+from gpu_utils import to_host        
 
 from parameters import (
     N, DT, T_TOTAL, SAVE_EVERY,
@@ -14,11 +12,6 @@ from parameters import (
 from integrator      import pack_state, unpack_state, rk4_step
 from rod_mechanics   import clamp_reactions
 from body_mechanics  import aggregate_rod_loads
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Initial state  (build on active device via parameters.xp arrays)
-# ─────────────────────────────────────────────────────────────────────────────
 
 def build_initial_state():
     from gpu_utils import xp
@@ -34,11 +27,6 @@ def build_initial_state():
 
     return pack_state(x0, Rb0, vb0, wb0,
                       rod_rs0, rod_Rs0, rod_vs0, rod_oms0)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# History buffers  (always CPU/NumPy)
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _allocate_history(n_frames):
     return {
@@ -88,10 +76,6 @@ def _record(hist, frame, t, state):
     hist["T_rod_b"][frame] = to_host(T_rod_b)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Main simulation loop
-# ─────────────────────────────────────────────────────────────────────────────
-
 def run_simulation(verbose=True):
     total_steps = int(T_TOTAL / DT)
     n_frames    = total_steps // SAVE_EVERY + 1
@@ -122,7 +106,6 @@ def run_simulation(verbose=True):
         t     = step * DT
         state = rk4_step(t - DT, state, DT)
 
-        # NaN guard (check on CPU — cheap 3-element transfer)
         x_now_cpu = to_host(state["x"])
         if not np.all(np.isfinite(x_now_cpu)):
             print(f"\n  !! NaN/Inf at step {step} (t={t:.5f} s). Aborting.")

@@ -1,5 +1,3 @@
-
-
 from gpu_utils import xp as np        
 from parameters import (
     MB, IB, IB_INV,
@@ -21,7 +19,7 @@ def aggregate_rod_loads(rod_rs, rod_Rs):
         ni0, mi0 = clamp_reactions(rod_rs[i], rod_Rs[i], i)
         Ri0 = R_I0[i];  pi = P_ATTACH[i]
         f_b_i   = Ri0 @ ni0
-        tau_b_i = np.cross(pi, f_b_i) - Ri0 @ mi0 
+        tau_b_i = np.cross(pi, f_b_i) - Ri0 @ mi0   
         F_rod_b += f_b_i
         T_rod_b += tau_b_i
     return F_rod_b, T_rod_b

@@ -1,5 +1,3 @@
-
-
 import argparse
 import sys
 import os
@@ -208,10 +206,6 @@ def _sanity_check(hist: dict) -> None:
     z_max = z.max()
     z0    = z[0]
 
-    # "Rise" = how far the body goes above its settled equilibrium.
-    # We measure from the POST-SETTLING minimum (after the first fall),
-    # not from z_arr[0] which is the stress-free initial overshoot height.
-    # Find the minimum after t > T_RAMP_BASE (settle phase ends).
     from parameters import T_RAMP_BASE, DT, SAVE_EVERY
     settle_frame = int(T_RAMP_BASE / (DT * SAVE_EVERY))
     z_settled    = z[settle_frame:]

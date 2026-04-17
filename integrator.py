@@ -1,17 +1,12 @@
-
-
 from gpu_utils import xp as np
 from gpu_utils import (batch_cayley, batch_rodrigues,
                         batch_project_SO3, batch_vect_from_RtdR)
-from parameters import N, DT, MB, r0_local_all, P_ATTACH, R_I0, K_RESTORE
+from parameters import N, DT, MB
 from rod_mechanics   import rod_rhs, rod_kinematics, skew
 from body_mechanics  import (body_rhs, body_kinematics,
                               clamp_kinematics, enforce_clamp)
 from contact_tendon  import external_forces_and_moments, apply_floor_clamp
 
-# ─────────────────────────────────────────────────────────────────────────────
-# State helpers
-# ─────────────────────────────────────────────────────────────────────────────
 
 def pack_state(x, Rb, vb, wb, rod_rs, rod_Rs, rod_vs, rod_oms):
     return {"x": x.copy(), "Rb": Rb.copy(), "vb": vb.copy(), "wb": wb.copy(),
@@ -24,22 +19,18 @@ def unpack_state(state):
     return (state["x"], state["Rb"], state["vb"], state["wb"],
             state["rod_rs"], state["rod_Rs"], state["rod_vs"], state["rod_oms"])
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
 def _vect_from_skew(S):
     """Scalar vect() for body rotation (3×3 → 3)."""
-    return np.array([S[2, 1], S[0, 2], S[1, 0]])
+    out = np.zeros(3)
+    out[0] = S[2, 1];  out[1] = S[0, 2];  out[2] = S[1, 0]
+    return out
 
 def _om_body_single(R0, dR):
     """ω = vect(R0ᵀ dR)  for a single (3,3) pair."""
     RtdR = R0.T @ dR
-    return np.array([RtdR[2, 1], RtdR[0, 2], RtdR[1, 0]])
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Clamp velocity constraint  (Bug 10)
-# ─────────────────────────────────────────────────────────────────────────────
+    out = np.zeros(3)
+    out[0] = RtdR[2, 1];  out[1] = RtdR[0, 2];  out[2] = RtdR[1, 0]
+    return out
 
 def _apply_clamp_velocity(rod_vs_list, rod_oms_list, vb, wb):
     for i in range(4):
@@ -49,9 +40,24 @@ def _apply_clamp_velocity(rod_vs_list, rod_oms_list, vb, wb):
 
 
 def _apply_tip_ground_constraint(rod_rs_list, rod_Rs_list, rod_vs_list):
+    """
+    Bilateral ground pin at tip node (N-1): z-position = 0, z-velocity = 0.
+
+    Physical meaning: the foot rests on the ground and cannot lift off.
+    The tendon actuation curls the rod (bowing effect), which pushes the
+    body UP while the tip stays DOWN.  This mirrors how node 0 is pinned
+    to the body — node N-1 is pinned to the ground.
+
+    Called every RK4 stage (inside _add_scaled) and post-step, so the
+    constraint is enforced throughout the integration — analogous to how
+    _apply_clamp_velocity enforces the base constraint.
+    """
     from parameters import GROUND_Z as _GZ
     for i in range(4):
+        # 1. Hard-pin tip z-position to ground
         rod_rs_list[i][-1, 2] = _GZ
+
+        # 2. Zero tip z-velocity in world frame (no lifting or sinking)
         R_tip   = rod_Rs_list[i][-1]           # (3, 3) director at tip
         v_body  = rod_vs_list[i][-1]           # (3,)   tip velocity, body frame
         v_world = R_tip @ v_body               # (3,)   world frame
@@ -59,48 +65,34 @@ def _apply_tip_ground_constraint(rod_rs_list, rod_Rs_list, rod_vs_list):
                                   np.zeros_like(v_world[2])])
         rod_vs_list[i][-1] = R_tip.T @ v_world_no_z   # back to body frame
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Full system derivatives
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _derivatives(t, state):
     (x, Rb, vb, wb,
      rod_rs, rod_Rs, rod_vs, rod_oms) = unpack_state(state)
 
-    # 1. Enforce geometric clamp
+    
     for i in range(4):
         enforce_clamp(x, Rb, rod_rs[i], rod_Rs[i], i)
 
-    # 2. World-frame node velocities  (vectorised — was: for j in range(N))
+    
     rod_vw = []
     for i in range(4):
-        # einsum 'nij,nj->ni'  ≡  R[j] @ v[j]  for all j
+
         rod_vw.append(np.einsum('nij,nj->ni', rod_Rs[i], rod_vs[i]))  # (N,3)
 
-    # 3. External forces + moments
+   
     rod_fext, rod_mext = [], []
     for i in range(4):
         F, M = external_forces_and_moments(t, i, rod_rs[i], rod_Rs[i], rod_vw[i])
         rod_fext.append(F);  rod_mext.append(M)
 
-    for i in range(4):
-        # Rb @ R_I0[i]: rotate leg-frame offsets to world frame
-        Rb_Ri0 = Rb @ R_I0[i]                                    # (3, 3)
-        p_world = Rb @ P_ATTACH[i]                               # (3,)
-        # r_desired: (N, 3)
-        r_desired = (x[None, :]
-                     + p_world[None, :]
-                     + np.einsum('ij,kj->ki', Rb_Ri0, r0_local_all[i]))
-        f_restore = -K_RESTORE * (rod_rs[i] - r_desired)         # (N, 3)
-        rod_fext[i] = rod_fext[i] + f_restore
-
-    # 4. Clamp BCs
+    
     clamp_vs, clamp_oms = [], []
     for i in range(4):
         cv, co = clamp_kinematics(vb, wb, i)
         clamp_vs.append(cv);  clamp_oms.append(co)
 
-    # 5. Rod PDE RHS
+    
     drod_vs, drod_oms = [], []
     for i in range(4):
         dv, dom = rod_rhs(rod_rs[i], rod_Rs[i], rod_vs[i], rod_oms[i],
@@ -108,10 +100,10 @@ def _derivatives(t, state):
                           clamp_vs[i], clamp_oms[i])
         drod_vs.append(dv);  drod_oms.append(dom)
 
-    # 6. Body EOM
+    
     dvb, dwb = body_rhs(Rb, vb, wb, rod_rs, rod_Rs)
 
-    # 7. Kinematic rates
+   
     dx, dRb = body_kinematics(Rb, vb, wb)
     drod_rs, drod_Rs = [], []
     for i in range(4):
@@ -122,9 +114,6 @@ def _derivatives(t, state):
             "rod_rs": drod_rs, "rod_Rs": drod_Rs,
             "rod_vs": drod_vs, "rod_oms": drod_oms}
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Provisional state for RK4 intermediate stages  (vectorised Cayley)
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _add_scaled(state, deriv, h):
     (x, Rb, vb, wb,
@@ -145,25 +134,21 @@ def _add_scaled(state, deriv, h):
         new_rod_vs.append( rod_vs[i]  + h * deriv["rod_vs"][i])
         new_rod_oms.append(rod_oms[i] + h * deriv["rod_oms"][i])
 
-        # Vectorised Cayley update for all N nodes  (was: for j in range(N))
-        # Bug 6: R^T @ Ṙ gives body-frame ω per node
+        
         om_all = batch_vect_from_RtdR(rod_Rs[i],          # (N, 3)
                                        deriv["rod_Rs"][i])
         dR_cay = batch_cayley(om_all, h)                   # (N, 3, 3)
         new_Ri = np.matmul(rod_Rs[i], dR_cay)             # (N, 3, 3)
         new_rod_Rs.append(new_Ri)
 
-    # Bug 10: overwrite node 0 with constraint velocity
+    
     _apply_clamp_velocity(new_rod_vs, new_rod_oms, new_vb, new_wb)
-    # Tip ground pin: node N-1 stays at z=0, no z-velocity (mirrors clamp at node 0)
+    
     _apply_tip_ground_constraint(new_rod_rs, new_rod_Rs, new_rod_vs)
 
     return pack_state(new_x, new_Rb, new_vb, new_wb,
                       new_rod_rs, new_rod_Rs, new_rod_vs, new_rod_oms)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Geometric RK4 step  (vectorised final accumulation)
-# ─────────────────────────────────────────────────────────────────────────────
 
 def rk4_step(t, state, dt):
     (x0, Rb0, vb0, wb0,
@@ -176,12 +161,12 @@ def rk4_step(t, state, dt):
 
     def _w(a, b, c, d): return (a + 2.0*b + 2.0*c + d) / 6.0
 
-    # ── Euclidean ─────────────────────────────────────────────────────────
+    
     new_x  = x0  + dt * _w(k1["x"],  k2["x"],  k3["x"],  k4["x"])
     new_vb = vb0 + dt * _w(k1["vb"], k2["vb"], k3["vb"], k4["vb"])
     new_wb = wb0 + dt * _w(k1["wb"], k2["wb"], k3["wb"], k4["wb"])
 
-    # ── Body SO(3) — scalar Rodrigues + Newton project ────────────────────
+    
     om_b1 = _om_body_single(Rb0, k1["Rb"])
     om_b2 = _om_body_single(Rb0, k2["Rb"])
     om_b3 = _om_body_single(Rb0, k3["Rb"])
@@ -190,7 +175,7 @@ def rk4_step(t, state, dt):
     dR_b     = batch_rodrigues(om_eff_b[None], dt)[0]
     new_Rb   = batch_project_SO3((Rb0 @ dR_b)[None])[0]
 
-    # ── Rod nodes — vectorised Rodrigues + Newton project ─────────────────
+    
     new_rod_rs, new_rod_Rs, new_rod_vs, new_rod_oms = [], [], [], []
     for i in range(4):
         new_rod_rs.append(rod_rs0[i] + dt * _w(k1["rod_rs"][i], k2["rod_rs"][i],
@@ -209,13 +194,13 @@ def rk4_step(t, state, dt):
 
         dR_rod  = batch_rodrigues(om_eff, dt)              # (N, 3, 3)
         new_Ri  = np.matmul(rod_Rs0[i], dR_rod)           # (N, 3, 3)
-        new_Ri  = batch_project_SO3(new_Ri)                # (N, 3, 3) 
+        new_Ri  = batch_project_SO3(new_Ri)                # (N, 3, 3)
         new_rod_Rs.append(new_Ri)
 
     new_state = pack_state(new_x, new_Rb, new_vb, new_wb,
                            new_rod_rs, new_rod_Rs, new_rod_vs, new_rod_oms)
 
-    # ── Post-step corrections ─────────────────────────────────────────────
+    
     for i in range(4):
         enforce_clamp(new_state["x"], new_state["Rb"],
                       new_state["rod_rs"][i], new_state["rod_Rs"][i], i)
@@ -223,16 +208,15 @@ def rk4_step(t, state, dt):
     _apply_clamp_velocity(new_state["rod_vs"], new_state["rod_oms"],
                           new_state["vb"], new_state["wb"])
 
-    # Tip ground pin (node N-1) — bilateral: tip cannot lift off ground
     _apply_tip_ground_constraint(new_state["rod_rs"], new_state["rod_Rs"],
                                   new_state["rod_vs"])
 
     for i in range(4):
-        # Vectorised world velocities
+        
         vw = np.einsum('nij,nj->ni', new_state["rod_Rs"][i],
                        new_state["rod_vs"][i])              # (N, 3)
         apply_floor_clamp(new_state["rod_rs"][i], vw)
-        # Write corrected velocities back to body frame
+        
         new_state["rod_vs"][i] = np.einsum('nji,nj->ni',
                                             new_state["rod_Rs"][i], vw)  # Rᵀ vw
 
