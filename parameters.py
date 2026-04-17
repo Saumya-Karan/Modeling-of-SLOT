@@ -1,36 +1,26 @@
-import math as _math               
+import math as _math             
 
 from gpu_utils import xp as np     
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Rod discretisation
-# ─────────────────────────────────────────────────────────────────────────────
 L  = 0.180
 N  = 21
 ds = L / (N - 1)
 s  = np.linspace(0.0, L, N)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Cross-section 
-# ─────────────────────────────────────────────────────────────────────────────
 THICK_FIXED = 0.0135
 THICK_TIP   = 0.0035
-WIDTH       = 0.020           
+WIDTH       = 0.020            
 
 thickness = THICK_FIXED + (THICK_TIP - THICK_FIXED) * np.linspace(0.0, 1.0, N)
 A_cs      = thickness * WIDTH                      
-I_bend    = WIDTH * thickness**3 / 12.0            
+I_bend    = WIDTH * thickness**3 / 12.0            #
 J_tor     = WIDTH * thickness**3 / 3.0
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Material properties — rod36.py values
-#   E_default = 10e6 Pa (10 MPa flexible TPU)
-#   rho = 1200 kg/m³
-# ─────────────────────────────────────────────────────────────────────────────
-E_MOD = 10.0e6          
+
+E_MOD = 10.0e6           
 NU    = 0.3
 G_MOD = E_MOD / (2.0 * (1.0 + NU))
-RHO   = 1200.0          
+RHO   = 1200.0           
 
 rhoA = RHO * A_cs
 
@@ -39,9 +29,6 @@ node_mass[1:-1] = 0.5 * (rhoA[:-2] + rhoA[1:-1]) * ds   # rod36.py formula
 node_mass[0]    = 0.5 * rhoA[0]  * ds
 node_mass[-1]   = 0.5 * rhoA[-1] * ds
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Stiffness matrices
-# ─────────────────────────────────────────────────────────────────────────────
 Ks_arr = np.zeros((N, 3, 3))
 Kb_arr = np.zeros((N, 3, 3))
 for j in range(N):
@@ -55,14 +42,12 @@ for j in range(N):
     I22 = rA * float(thickness[j])**2 / 12.0
     I_rod_arr[j] = np.diag(np.array([I11, I22, I11 + I22]))
 
-
 I_rod_inv = np.zeros((N, 3, 3))
 for j in range(N):
     d = np.array([float(I_rod_arr[j, 0, 0]),
                   float(I_rod_arr[j, 1, 1]),
                   float(I_rod_arr[j, 2, 2])])
     I_rod_inv[j] = np.diag(1.0 / d)
-
 
 MB = 0.500
 BX = 0.1255
@@ -75,7 +60,7 @@ IB_INV = np.linalg.inv(IB)
 hx    = BX / 2.0
 hy    = BY / 2.0
 hz    = BZ / 2.0
-z_off = -hz + THICK_FIXED / 2.0    
+z_off = -hz + THICK_FIXED / 2.0   
 
 P_ATTACH = np.array([
     [ hx,  hy, z_off],
@@ -86,7 +71,6 @@ P_ATTACH = np.array([
 
 SPLAY_DEG = np.array([45.0, 135.0, -135.0, -45.0])
 SPLAY_RAD = np.deg2rad(SPLAY_DEG)
-
 
 def make_Ri0(alpha):
     a  = float(alpha)
@@ -99,9 +83,7 @@ def make_Ri0(alpha):
 
 R_I0 = [make_Ri0(a) for a in SPLAY_RAD]
 
-
-Z_BODY_INIT = 0.032      
-
+Z_BODY_INIT = 0.032     
 Z0_FIXED    = Z_BODY_INIT + z_off   
 
 A_CUB = 2.0 * Z0_FIXED / L**3
@@ -112,10 +94,9 @@ def cubic_dz(sv): return 3.0*A_CUB*sv**2 + 2.0*B_CUB*sv
 
 
 def _log_SO3(R):
-    
     cos_theta = _math.acos(max(-1.0, min(1.0,
                     float(0.5 * (float(np.trace(R)) - 1.0)))))
-    theta = cos_theta                          
+    theta = cos_theta                          # already a Python float
     if theta < 1.0e-8:
         return np.zeros(3)
     sin_theta = _math.sin(theta)
@@ -124,7 +105,6 @@ def _log_SO3(R):
 
 
 def _build_initial_rod(i):
-    
     alpha  = float(SPLAY_RAD[i])
     ca     = _math.cos(alpha)
     sa     = _math.sin(alpha)
@@ -137,7 +117,6 @@ def _build_initial_rod(i):
         sj   = float(s[j])
         zsj  = float(z_s[j])
         dzsj = float(dz_s[j])
-        
         r_rod[j] = clamp_w + np.array([sj*ca, sj*sa, zsj - Z0_FIXED])
         L_j      = _math.sqrt(1.0 + dzsj**2)
         d3_j     = np.array([ca/L_j, sa/L_j, dzsj/L_j])
@@ -159,17 +138,18 @@ for _i in range(4):
     r0_all[_i], R0_all[_i] = _build_initial_rod(_i)
     u0_all[_i], k0_all[_i] = _compute_ref_strains(r0_all[_i], R0_all[_i])
 
-
 DT         = 5.0e-6       
-T_TOTAL    = 2.00         
+T_TOTAL    = 2.10        
 SAVE_EVERY = 200
 
 G_VEC = np.array([0.0, 0.0, -9.81])
 
 
-T_BASE      = 3.0          
 
-TENDON_FMAX = 3.6         
+
+T_BASE      = 2.21         
+
+TENDON_FMAX = 4.0          
 
 T_EXTRA     = TENDON_FMAX - T_BASE
 
@@ -189,7 +169,6 @@ T_REL_END  = T_DN_END
 
 
 def tendon_magnitude(t: float) -> float:
-
     if t <= 0.0:
         return float(T_BASE)
     elif t < T_RAMP_END:
@@ -201,14 +180,13 @@ def tendon_magnitude(t: float) -> float:
         tau = (t - T_HOLD_END) / (T_DN_END - T_HOLD_END)
         return T_BASE + T_EXTRA * 0.5 * (1.0 + _math.cos(_math.pi * tau))
     else:
-        return float(T_BASE)   
+        return float(T_BASE)
 
 
 MU_CONTACT = 0.4
 GROUND_Z   = 0.0
 K_CONTACT  = 100000.0   
 D_CONTACT  = 10.0       
-
 
 C_LIN = 40.0   
 C_ANG = 40.0   

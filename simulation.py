@@ -8,10 +8,18 @@ from parameters import (
     r0_all, R0_all,
     Z_BODY_INIT,
     tendon_magnitude,
+    MB, RHO, ds,
 )
 from integrator      import pack_state, unpack_state, rk4_step
 from rod_mechanics   import clamp_reactions
 from body_mechanics  import aggregate_rod_loads
+
+import numpy as _np_cpu
+from parameters import A_cs as _A_cs
+_G          = 9.81
+_m_rod      = float(RHO * _np_cpu.sum(_np_cpu.array([float(a) for a in _A_cs])) * ds)
+_TOTAL_MASS = MB + 4.0 * _m_rod
+_GRF_STATIC = _TOTAL_MASS * _G / 4.0   # ≈ 1.59 N per leg
 
 def build_initial_state():
     from gpu_utils import xp
@@ -75,7 +83,6 @@ def _record(hist, frame, t, state):
     hist["F_rod_b"][frame] = to_host(F_rod_b)
     hist["T_rod_b"][frame] = to_host(T_rod_b)
 
-
 def run_simulation(verbose=True):
     total_steps = int(T_TOTAL / DT)
     n_frames    = total_steps // SAVE_EVERY + 1
@@ -100,12 +107,16 @@ def run_simulation(verbose=True):
     wall_start = _time.perf_counter()
     PRINT_EVERY = 5000
 
+    _dt_print = PRINT_EVERY * DT          
+    _z_hist   = [float(Z_BODY_INIT)] * 3  
+
     _record(hist, frame, t, state);  frame += 1
 
     for step in range(1, total_steps + 1):
         t     = step * DT
         state = rk4_step(t - DT, state, DT)
 
+        # NaN guard (check on CPU — cheap 3-element transfer)
         x_now_cpu = to_host(state["x"])
         if not np.all(np.isfinite(x_now_cpu)):
             print(f"\n  !! NaN/Inf at step {step} (t={t:.5f} s). Aborting.")
@@ -125,11 +136,18 @@ def run_simulation(verbose=True):
             z_now   = float(x_now_cpu[2])
             T_now   = tendon_magnitude(t)
             rate    = step / elapsed if elapsed > 0 else 0.0
+
+            _z_hist.append(z_now); _z_hist.pop(0)
+            a_z  = (_z_hist[2] - 2.0*_z_hist[1] + _z_hist[0]) / (_dt_print**2)
+            grf  = _TOTAL_MASS * (_G + a_z) / 4.0
+            grf_dev = grf - _GRF_STATIC
+
             print(f"  step {step:>7,}/{total_steps:,}"
                   f"  ({frac*100:5.1f}%)"
                   f"  t={t*1000:6.2f}ms"
                   f"  z={z_now*1000:6.2f}mm"
                   f"  T={T_now:5.1f}N"
+                  f"  GRF={grf:5.2f}N(Δ{grf_dev:+.2f})"
                   f"  {rate:,.0f}steps/s"
                   f"  ETA {eta:5.0f}s")
 
