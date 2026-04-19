@@ -149,7 +149,7 @@ G_VEC = np.array([0.0, 0.0, -9.81])
 
 T_BASE      = 2.21         
 
-TENDON_FMAX = 4.0          
+TENDON_FMAX = 114.0          
 
 T_EXTRA     = TENDON_FMAX - T_BASE
 
